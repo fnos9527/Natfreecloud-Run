@@ -10,6 +10,11 @@ jobs:
   checkin:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # 关键修复：secrets 不能直接用在 if: 条件里（GitHub Actions 语法限制，
+    # 会导致 "Unrecognized named-value: 'secrets'" 校验错误，整个工作流无法运行）。
+    # 这里先把 secret 映射成 job 级别的 env 变量，后面的 if: 都改成判断 env。
+    env:
+      HAS_PROXY: ${{ secrets.VLESS_LINK != '' }}
 
     steps:
       - name: 检出代码
@@ -29,24 +34,28 @@ jobs:
       # ---------- 以下两步只有在配置了 VLESS_LINK 这个 Secret 时才会执行 ----------
 
       - name: 生成 Xray 配置文件
-        if: ${{ secrets.VLESS_LINK != '' }}
+        if: ${{ env.HAS_PROXY == 'true' }}
         env:
           VLESS_LINK: ${{ secrets.VLESS_LINK }}
         run: node scripts/vless-to-xray.js
 
       - name: 下载并启动 Xray-core（本地 Socks5 代理）
-        if: ${{ secrets.VLESS_LINK != '' }}
+        if: ${{ env.HAS_PROXY == 'true' }}
         run: |
           curl -L -o xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
           unzip -o xray.zip -d xray-bin
           chmod +x xray-bin/xray
-          nohup ./xray-bin/xray run -c xray-config.json > xray.log 2>&1 &
+          # 用 setsid 彻底与当前 step 的 shell 会话脱离，避免 step 结束时
+          # 后台进程被一并杀掉（GitHub Actions 每个 step 结束会清理该 step
+          # 的进程组，单纯 nohup + & 有时无法在下一个 step 中存活）。
+          setsid nohup ./xray-bin/xray run -c xray-config.json > xray.log 2>&1 < /dev/null &
+          disown
           sleep 3
           echo "---- Xray 启动日志 ----"
           cat xray.log || true
 
       - name: 测试代理连通性
-        if: ${{ secrets.VLESS_LINK != '' }}
+        if: ${{ env.HAS_PROXY == 'true' }}
         run: |
           curl -x socks5h://127.0.0.1:1080 -s -o /dev/null -w "代理测试 HTTP 状态码: %{http_code}\n" https://nat.freecloud.ltd || echo "⚠️ 代理测试未通过，脚本仍会尝试运行"
 
@@ -56,7 +65,7 @@ jobs:
         env:
           EMAIL: ${{ secrets.EMAIL }}
           PASSWORD: ${{ secrets.PASSWORD }}
-          USE_PROXY: ${{ secrets.VLESS_LINK != '' && 'true' || 'false' }}
+          USE_PROXY: ${{ env.HAS_PROXY }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: node scripts/checkin.js
