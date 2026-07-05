@@ -1,0 +1,71 @@
+name: Natfreecloud 自动签到
+
+on:
+  schedule:
+    # UTC 17:00 = 北京时间次日 01:00
+    - cron: '0 17 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安装依赖
+        run: npm install
+
+      - name: 安装 Playwright 浏览器
+        run: npx playwright install --with-deps chromium
+
+      # ---------- 以下两步只有在配置了 VLESS_LINK 这个 Secret 时才会执行 ----------
+
+      - name: 生成 Xray 配置文件
+        if: ${{ secrets.VLESS_LINK != '' }}
+        env:
+          VLESS_LINK: ${{ secrets.VLESS_LINK }}
+        run: node scripts/vless-to-xray.js
+
+      - name: 下载并启动 Xray-core（本地 Socks5 代理）
+        if: ${{ secrets.VLESS_LINK != '' }}
+        run: |
+          curl -L -o xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          unzip -o xray.zip -d xray-bin
+          chmod +x xray-bin/xray
+          nohup ./xray-bin/xray run -c xray-config.json > xray.log 2>&1 &
+          sleep 3
+          echo "---- Xray 启动日志 ----"
+          cat xray.log || true
+
+      - name: 测试代理连通性
+        if: ${{ secrets.VLESS_LINK != '' }}
+        run: |
+          curl -x socks5h://127.0.0.1:1080 -s -o /dev/null -w "代理测试 HTTP 状态码: %{http_code}\n" https://nat.freecloud.ltd || echo "⚠️ 代理测试未通过，脚本仍会尝试运行"
+
+      # ---------------------------------------------------------------------
+
+      - name: 运行登录 + 签到脚本
+        env:
+          EMAIL: ${{ secrets.EMAIL }}
+          PASSWORD: ${{ secrets.PASSWORD }}
+          USE_PROXY: ${{ secrets.VLESS_LINK != '' && 'true' || 'false' }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: node scripts/checkin.js
+
+      - name: 上传调试截图（无论成功失败都会保存，方便排查）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkin-screenshots
+          path: screenshots/
+          retention-days: 3
+          if-no-files-found: ignore
