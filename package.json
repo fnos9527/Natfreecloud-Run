@@ -1,0 +1,13 @@
+{
+  "name": "natfreecloud-auto-checkin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Natfreecloud 自动登录 + 每日签到脚本（支持 VLESS 代理 / 直连自动切换）",
+  "scripts": {
+    "checkin": "node scripts/checkin.js"
+  },
+  "dependencies": {
+    "playwright": "^1.47.0",
+    "tesseract.js": "^5.1.0"
+  }
+}
