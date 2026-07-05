@@ -1,0 +1,6 @@
+node_modules/
+screenshots/
+xray-bin/
+xray.zip
+xray.log
+xray-config.json
